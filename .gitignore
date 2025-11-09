@@ -90,5 +90,13 @@ backend/.cache/
 backend/models/
 *.safetensors
 
+# RAG related
+backend/test_uploads/
+backend/test_vector_store/
+backend/uploads/
+backend/vector_store/
+*.faiss
+*.pkl
+
 # User-specific files
 .history/

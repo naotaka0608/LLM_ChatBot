@@ -1,10 +1,14 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 import torch
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import logging
+from pathlib import Path
+import shutil
+
+from rag_manager import RAGManager
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -49,11 +53,16 @@ AVAILABLE_MODELS = {
 model_cache: Dict[str, Dict] = {}
 current_model_id: Optional[str] = None
 
+# RAGマネージャー初期化
+rag_manager = RAGManager()
+
 class ChatRequest(BaseModel):
     message: str
     model_id: Optional[str] = "gpt2"
     max_length: Optional[int] = 100
     temperature: Optional[float] = 0.7
+    use_rag: Optional[bool] = False
+    rag_k: Optional[int] = 3
 
 class ModelSelectRequest(BaseModel):
     model_id: str
@@ -61,12 +70,15 @@ class ModelSelectRequest(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "HuggingFace LLM Chatbot API",
+        "message": "HuggingFace LLM Chatbot API with RAG",
         "endpoints": {
             "/models": "利用可能なモデル一覧",
             "/chat": "チャット（POST）",
             "/model/select": "モデル選択（POST）",
-            "/model/current": "現在のモデル情報"
+            "/model/current": "現在のモデル情報",
+            "/documents/upload": "ドキュメントアップロード（POST）",
+            "/documents/list": "ドキュメント一覧（GET）",
+            "/documents/delete": "全ドキュメント削除（DELETE）"
         }
     }
 
@@ -152,7 +164,7 @@ def load_model(model_id: str):
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    """チャットメッセージを処理"""
+    """チャットメッセージを処理（RAG対応）"""
     global current_model_id
 
     # モデルが指定されていない場合、デフォルトを使用
@@ -170,39 +182,162 @@ async def chat(request: ChatRequest):
 
         pipe = model_cache[model_id]["pipeline"]
 
+        # RAG使用時は関連ドキュメントを検索
+        retrieved_docs = []
+        if request.use_rag:
+            logger.info(f"RAG検索を実行: k={request.rag_k}")
+            retrieved_docs = rag_manager.search(request.message, k=request.rag_k)
+
+            if retrieved_docs:
+                # RAG有効時は検索結果を直接まとめて返す
+                logger.info(f"{len(retrieved_docs)}件のドキュメントを発見")
+
+                # 検索結果をまとめて回答を生成
+                answer_parts = []
+                answer_parts.append(f"アップロードされたドキュメントから{len(retrieved_docs)}件の関連情報が見つかりました：\n")
+
+                for i, doc in enumerate(retrieved_docs, 1):
+                    source = doc['source']
+                    content = doc['content'][:300]  # 最初の300文字
+                    answer_parts.append(f"\n【{i}. {source}】")
+                    answer_parts.append(content)
+                    if len(doc['content']) > 300:
+                        answer_parts.append("...")
+
+                # 検索ベースの回答を直接返す（LLM生成なし）
+                response_text = "\n".join(answer_parts)
+
+                response_data = {
+                    "status": "success",
+                    "response": response_text,
+                    "model_id": model_id,
+                    "input": request.message,
+                    "retrieved_docs": retrieved_docs,
+                    "context_used": True,
+                    "rag_direct_answer": True  # RAGの直接回答であることを示す
+                }
+
+                return response_data
+            else:
+                # 検索結果がない場合
+                response_data = {
+                    "status": "success",
+                    "response": "アップロードされたドキュメントから関連する情報が見つかりませんでした。",
+                    "model_id": model_id,
+                    "input": request.message,
+                    "retrieved_docs": [],
+                    "context_used": False
+                }
+
+                return response_data
+
+        # RAG未使用時は通常のLLM生成
+        prompt = request.message
+
         # テキスト生成
-        logger.info(f"テキスト生成中: {request.message[:50]}...")
+        logger.info(f"テキスト生成中: {prompt[:100]}...")
 
         result = pipe(
-            request.message,
-            max_length=request.max_length,
+            prompt,
+            max_new_tokens=150,
             temperature=request.temperature,
             num_return_sequences=1,
             do_sample=True,
-            pad_token_id=pipe.tokenizer.eos_token_id
+            pad_token_id=pipe.tokenizer.eos_token_id,
+            eos_token_id=pipe.tokenizer.eos_token_id,
+            repetition_penalty=1.2
         )
 
         generated_text = result[0]["generated_text"]
 
-        return {
+        response_data = {
             "status": "success",
             "response": generated_text,
             "model_id": model_id,
             "input": request.message
         }
 
+        return response_data
+
     except Exception as e:
         logger.error(f"チャット処理エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"チャット処理に失敗しました: {str(e)}")
 
+@app.post("/documents/upload")
+async def upload_document(file: UploadFile = File(...)):
+    """ドキュメントをアップロード"""
+    try:
+        # ファイル拡張子チェック
+        filename = file.filename
+        if not filename:
+            raise HTTPException(status_code=400, detail="ファイル名が不正です")
+
+        file_ext = Path(filename).suffix.lower()
+        if file_ext not in ['.pdf', '.txt', '.md']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"未対応のファイル形式です: {file_ext}。対応形式: .pdf, .txt, .md"
+            )
+
+        # ファイルを保存
+        file_path = rag_manager.upload_dir / filename
+        with open(file_path, 'wb') as f:
+            shutil.copyfileobj(file.file, f)
+
+        # ドキュメントを処理（埋め込み生成）
+        logger.info(f"ドキュメント処理開始: {filename}")
+        doc_info = rag_manager.process_document(file_path, filename)
+
+        return {
+            "status": "success",
+            "message": f"ファイル '{filename}' をアップロードしました",
+            "document": doc_info
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ファイルアップロードエラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ファイルアップロードに失敗しました: {str(e)}")
+
+@app.get("/documents/list")
+async def list_documents():
+    """アップロード済みドキュメントの一覧を取得"""
+    try:
+        documents = rag_manager.get_documents()
+        return {
+            "status": "success",
+            "count": len(documents),
+            "documents": documents
+        }
+    except Exception as e:
+        logger.error(f"ドキュメント一覧取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ドキュメント一覧の取得に失敗しました: {str(e)}")
+
+@app.delete("/documents/delete")
+async def delete_all_documents():
+    """全てのドキュメントを削除"""
+    try:
+        rag_manager.delete_all_documents()
+        return {
+            "status": "success",
+            "message": "全てのドキュメントを削除しました"
+        }
+    except Exception as e:
+        logger.error(f"ドキュメント削除エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ドキュメント削除に失敗しました: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """ヘルスチェック"""
+    documents = rag_manager.get_documents()
     return {
         "status": "healthy",
         "cuda_available": torch.cuda.is_available(),
         "loaded_models": list(model_cache.keys()),
-        "current_model": current_model_id
+        "current_model": current_model_id,
+        "rag_enabled": True,
+        "documents_count": len(documents)
     }
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Chatbot - Electron App</title>
+    <title>LLM Chatbot with RAG - Electron App</title>
     <style>
         * {
             margin: 0;
@@ -74,17 +74,136 @@
             margin-left: 10px;
         }
 
+        .main-container {
+            flex: 1;
+            display: flex;
+            gap: 20px;
+            max-width: 1600px;
+            width: 100%;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .sidebar h2 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-section {
+            border: 2px dashed #667eea;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .upload-section:hover {
+            background: #f0f0ff;
+        }
+
+        .upload-section input[type="file"] {
+            display: none;
+        }
+
+        .upload-btn {
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .documents-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .document-item {
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .document-item .name {
+            font-weight: bold;
+            color: #333;
+        }
+
+        .document-item .info {
+            color: #666;
+            font-size: 11px;
+            margin-top: 5px;
+        }
+
+        .delete-all-btn {
+            padding: 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
         .chat-container {
             flex: 1;
             display: flex;
             flex-direction: column;
-            max-width: 1200px;
-            width: 100%;
-            margin: 20px auto;
             background: white;
             border-radius: 10px;
             overflow: hidden;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .settings {
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            font-size: 13px;
+            flex-wrap: wrap;
+        }
+
+        .settings label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #666;
+        }
+
+        .settings input[type="range"] {
+            width: 120px;
+        }
+
+        .settings input[type="number"] {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #e0e0e0;
+            border-radius: 3px;
+        }
+
+        .settings input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
         }
 
         .messages {
@@ -134,6 +253,27 @@
             max-width: 100%;
             text-align: center;
             font-size: 13px;
+        }
+
+        .retrieved-docs {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e7f3ff;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .retrieved-docs .doc-title {
+            font-weight: bold;
+            color: #0066cc;
+            margin-bottom: 5px;
+        }
+
+        .retrieved-docs .doc-content {
+            color: #333;
+            margin-bottom: 5px;
+            padding-left: 10px;
+            border-left: 2px solid #0066cc;
         }
 
         .input-container {
@@ -203,39 +343,11 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
-        .settings {
-            padding: 15px 20px;
-            background: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            font-size: 13px;
-        }
-
-        .settings label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: #666;
-        }
-
-        .settings input[type="range"] {
-            width: 120px;
-        }
-
-        .settings input[type="number"] {
-            width: 80px;
-            padding: 5px;
-            border: 1px solid #e0e0e0;
-            border-radius: 3px;
-        }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🤖 LLM Chatbot</h1>
+        <h1>🤖 LLM Chatbot with RAG</h1>
         <div class="model-selector">
             <label>モデル:</label>
             <select id="modelSelect">
@@ -246,40 +358,69 @@
         </div>
     </div>
 
-    <div class="chat-container">
-        <div class="settings">
-            <label>
-                最大長:
-                <input type="number" id="maxLength" value="100" min="50" max="500" step="10">
-            </label>
-            <label>
-                Temperature:
-                <input type="range" id="temperature" value="0.7" min="0.1" max="2.0" step="0.1">
-                <span id="tempValue">0.7</span>
-            </label>
-        </div>
-
-        <div class="messages" id="messages">
-            <div class="message system">
-                <div class="message-content">
-                    チャットボットへようこそ！モデルを選択して「読み込み」ボタンをクリックしてください。
+    <div class="main-container">
+        <!-- サイドバー: ドキュメント管理 -->
+        <div class="sidebar">
+            <div>
+                <h2>📄 ドキュメント</h2>
+                <div class="upload-section" onclick="document.getElementById('fileInput').click()">
+                    <input type="file" id="fileInput" accept=".pdf,.txt,.md" onchange="uploadFile(event)">
+                    <p>📁 ファイルをアップロード</p>
+                    <p style="font-size: 12px; color: #666; margin-top: 5px;">PDF, TXT, MD</p>
                 </div>
             </div>
+
+            <div class="documents-list" id="documentsList">
+                <p style="color: #999; text-align: center; font-size: 13px;">ドキュメントなし</p>
+            </div>
+
+            <button class="delete-all-btn" onclick="deleteAllDocuments()">全て削除</button>
         </div>
 
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <span>処理中...</span>
-        </div>
+        <!-- チャットエリア -->
+        <div class="chat-container">
+            <div class="settings">
+                <label>
+                    最大長:
+                    <input type="number" id="maxLength" value="100" min="50" max="500" step="10">
+                </label>
+                <label>
+                    Temperature:
+                    <input type="range" id="temperature" value="0.7" min="0.1" max="2.0" step="0.1">
+                    <span id="tempValue">0.7</span>
+                </label>
+                <label>
+                    <input type="checkbox" id="useRAG">
+                    RAGを使用
+                </label>
+                <label id="ragKLabel" style="display: none;">
+                    取得数:
+                    <input type="number" id="ragK" value="3" min="1" max="10">
+                </label>
+            </div>
 
-        <div class="input-container">
-            <input
-                type="text"
-                id="messageInput"
-                placeholder="メッセージを入力..."
-                onkeypress="handleKeyPress(event)"
-            >
-            <button id="sendButton" onclick="sendMessage()">送信</button>
+            <div class="messages" id="messages">
+                <div class="message system">
+                    <div class="message-content">
+                        チャットボットへようこそ！モデルを選択して「読み込み」ボタンをクリックしてください。
+                    </div>
+                </div>
+            </div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <span>処理中...</span>
+            </div>
+
+            <div class="input-container">
+                <input
+                    type="text"
+                    id="messageInput"
+                    placeholder="メッセージを入力..."
+                    onkeypress="handleKeyPress(event)"
+                >
+                <button id="sendButton" onclick="sendMessage()">送信</button>
+            </div>
         </div>
     </div>
 
@@ -291,7 +432,19 @@
         // 初期化
         async function init() {
             await loadAvailableModels();
+            await loadDocuments();
             updateTemperatureDisplay();
+            setupRAGToggle();
+        }
+
+        // RAGトグルのセットアップ
+        function setupRAGToggle() {
+            const useRAGCheckbox = document.getElementById('useRAG');
+            const ragKLabel = document.getElementById('ragKLabel');
+
+            useRAGCheckbox.addEventListener('change', (e) => {
+                ragKLabel.style.display = e.target.checked ? 'flex' : 'none';
+            });
         }
 
         // 利用可能なモデルを取得
@@ -372,6 +525,88 @@
             });
         }
 
+        // ファイルアップロード
+        async function uploadFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const loading = document.getElementById('loading');
+            loading.classList.add('active');
+
+            try {
+                const response = await fetch(`${API_URL}/documents/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    addSystemMessage(`ファイル「${file.name}」をアップロードしました。`);
+                    await loadDocuments();
+                } else {
+                    addSystemMessage(`エラー: ${data.detail}`);
+                }
+            } catch (error) {
+                addSystemMessage(`エラー: ${error.message}`);
+            } finally {
+                loading.classList.remove('active');
+                event.target.value = '';
+            }
+        }
+
+        // ドキュメント一覧を取得
+        async function loadDocuments() {
+            try {
+                const response = await fetch(`${API_URL}/documents/list`);
+                const data = await response.json();
+
+                const listEl = document.getElementById('documentsList');
+
+                if (data.count === 0) {
+                    listEl.innerHTML = '<p style="color: #999; text-align: center; font-size: 13px;">ドキュメントなし</p>';
+                } else {
+                    listEl.innerHTML = '';
+                    data.documents.forEach(doc => {
+                        const item = document.createElement('div');
+                        item.className = 'document-item';
+                        item.innerHTML = `
+                            <div class="name">${doc.filename}</div>
+                            <div class="info">チャンク: ${doc.chunks} | 文字数: ${doc.characters.toLocaleString()}</div>
+                        `;
+                        listEl.appendChild(item);
+                    });
+                }
+            } catch (error) {
+                console.error('ドキュメント一覧の取得エラー:', error);
+            }
+        }
+
+        // 全ドキュメント削除
+        async function deleteAllDocuments() {
+            if (!confirm('全てのドキュメントを削除しますか？')) return;
+
+            try {
+                const response = await fetch(`${API_URL}/documents/delete`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    addSystemMessage('全てのドキュメントを削除しました。');
+                    await loadDocuments();
+                } else {
+                    addSystemMessage(`エラー: ${data.detail}`);
+                }
+            } catch (error) {
+                addSystemMessage(`エラー: ${error.message}`);
+            }
+        }
+
         // メッセージを送信
         async function sendMessage() {
             const input = document.getElementById('messageInput');
@@ -398,6 +633,8 @@
             try {
                 const maxLength = parseInt(document.getElementById('maxLength').value);
                 const temperature = parseFloat(document.getElementById('temperature').value);
+                const useRAG = document.getElementById('useRAG').checked;
+                const ragK = parseInt(document.getElementById('ragK').value);
 
                 const response = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
@@ -406,14 +643,16 @@
                         message: message,
                         model_id: currentModel,
                         max_length: maxLength,
-                        temperature: temperature
+                        temperature: temperature,
+                        use_rag: useRAG,
+                        rag_k: ragK
                     })
                 });
 
                 const data = await response.json();
 
                 if (response.ok) {
-                    addMessage('bot', data.response);
+                    addMessage('bot', data.response, data.retrieved_docs);
                 } else {
                     addSystemMessage(`エラー: ${data.detail}`);
                 }
@@ -427,7 +666,7 @@
         }
 
         // メッセージを追加
-        function addMessage(type, content) {
+        function addMessage(type, content, retrievedDocs = null) {
             const messagesContainer = document.getElementById('messages');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}`;
@@ -437,6 +676,24 @@
             contentDiv.textContent = content;
 
             messageDiv.appendChild(contentDiv);
+
+            // 検索されたドキュメントを表示
+            if (retrievedDocs && retrievedDocs.length > 0) {
+                const docsDiv = document.createElement('div');
+                docsDiv.className = 'retrieved-docs';
+
+                docsDiv.innerHTML = '<div class="doc-title">📚 参考にした情報:</div>';
+
+                retrievedDocs.forEach((doc, index) => {
+                    const docContent = document.createElement('div');
+                    docContent.className = 'doc-content';
+                    docContent.textContent = `[${index + 1}] ${doc.source}: ${doc.content.substring(0, 100)}...`;
+                    docsDiv.appendChild(docContent);
+                });
+
+                contentDiv.appendChild(docsDiv);
+            }
+
             messagesContainer.appendChild(messageDiv);
 
             // スクロールを最下部に
