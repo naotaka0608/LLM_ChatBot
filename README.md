@@ -1,11 +1,13 @@
-# HuggingFace LLM Chatbot - Electron + FastAPI
+# HuggingFace LLM Chatbot with RAG - Electron + FastAPI
 
-ローカルで動作するLLMチャットボットアプリケーションです。HuggingFaceのモデルを使用し、FastAPIバックエンドとElectronフロントエンドで構成されています。
+ローカルで動作するLLMチャットボットアプリケーションです。HuggingFaceのモデルを使用し、RAG（Retrieval-Augmented Generation）機能により、アップロードしたドキュメントを参照した回答が可能です。
 
 ## 特徴
 
 - 🤖 複数のLLMモデルを選択可能
 - 💬 リアルタイムチャットインターフェース
+- 📚 **RAG機能**: PDF/TXT/MDファイルをアップロードして参照可能
+- 🔍 **ベクトル検索**: FAISS + HuggingFace Embeddingsによる高速検索
 - 🎛️ Temperature、最大長などのパラメータ調整
 - 🔄 モデルの動的ロード・切り替え
 - 💾 モデルキャッシュによる高速化
@@ -14,13 +16,16 @@
 
 ```
 .
-├── backend/          # FastAPIサーバー
-│   ├── Pipfile      # Python依存関係
-│   └── main.py      # FastAPI + HuggingFace実装
-├── frontend/        # Electronアプリ
-│   ├── package.json # Node.js依存関係
-│   ├── main.js      # Electronメインプロセス
-│   └── index.html   # チャットボットUI
+├── backend/              # FastAPIサーバー
+│   ├── Pipfile          # Python依存関係
+│   ├── main.py          # FastAPI + HuggingFace + RAG実装
+│   ├── rag_manager.py   # RAG機能（ドキュメント処理・検索）
+│   ├── uploads/         # アップロードファイル保存先
+│   └── vector_store/    # FAISSベクトルDB永続化
+├── frontend/            # Electronアプリ
+│   ├── package.json     # Node.js依存関係
+│   ├── main.js          # Electronメインプロセス
+│   └── index.html       # チャットボットUI（RAG対応）
 └── README.md
 ```
 
@@ -86,10 +91,29 @@ npm start
 
 ## 使い方
 
+### 基本的な使い方
+
 1. Electronアプリが起動したら、上部のモデル選択ドロップダウンからモデルを選択
 2. 「読み込み」ボタンをクリックしてモデルをロード（初回は数分かかる場合があります）
 3. メッセージ入力欄にテキストを入力して送信
 4. LLMからの応答を待つ
+
+### RAG機能の使い方
+
+1. **ドキュメントをアップロード**
+   - 左サイドバーの「📁 ファイルをアップロード」エリアをクリック
+   - PDF、TXT、またはMDファイルを選択
+   - アップロード完了後、ドキュメント一覧に表示されます
+
+2. **RAGを使った質問**
+   - チャット設定で「RAGを使用」をチェック
+   - 「取得数」でドキュメントから検索する情報の件数を設定（1-10件）
+   - 質問を入力して送信
+   - アップロードしたドキュメントから関連情報を検索し、回答に反映されます
+
+3. **ドキュメント管理**
+   - サイドバーでアップロード済みドキュメントを確認
+   - 「全て削除」ボタンですべてのドキュメントを削除可能
 
 ## 利用可能なモデル
 
@@ -118,12 +142,20 @@ npm start
 
 FastAPIサーバーは以下のエンドポイントを提供します：
 
+### LLMモデル関連
 - `GET /` - API情報
 - `GET /models` - 利用可能なモデル一覧
 - `GET /model/current` - 現在ロードされているモデル情報
 - `POST /model/select` - モデルを選択してロード
-- `POST /chat` - チャットメッセージを送信
+- `POST /chat` - チャットメッセージを送信（RAG対応）
 - `GET /health` - ヘルスチェック
+
+### RAG機能関連
+- `POST /documents/upload` - ドキュメントをアップロード（PDF/TXT/MD）
+- `GET /documents/list` - アップロード済みドキュメント一覧
+- `DELETE /documents/delete` - 全ドキュメントを削除
+
+### その他
 - `GET /docs` - Swagger UI（APIドキュメント）
 
 ### APIの使用例
@@ -137,15 +169,33 @@ curl -X POST http://localhost:8000/model/select \
   -H "Content-Type: application/json" \
   -d '{"model_id": "gpt2"}'
 
-# チャット
+# 通常のチャット
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
   -d '{
     "message": "Hello, how are you?",
     "model_id": "gpt2",
     "max_length": 100,
-    "temperature": 0.7
+    "temperature": 0.7,
+    "use_rag": false
   }'
+
+# RAGを使ったチャット
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "アップロードしたファイルの内容を教えて",
+    "model_id": "gpt2",
+    "use_rag": true,
+    "rag_k": 3
+  }'
+
+# ドキュメントをアップロード
+curl -X POST http://localhost:8000/documents/upload \
+  -F "file=@document.pdf"
+
+# ドキュメント一覧を取得
+curl http://localhost:8000/documents/list
 ```
 
 ## トラブルシューティング
