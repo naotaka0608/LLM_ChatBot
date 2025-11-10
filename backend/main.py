@@ -7,8 +7,10 @@ from typing import Optional, Dict, List
 import logging
 from pathlib import Path
 import shutil
+import uuid
 
 from rag_manager import RAGManager
+from db_manager import DBManager
 
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
@@ -53,8 +55,11 @@ AVAILABLE_MODELS = {
 model_cache: Dict[str, Dict] = {}
 current_model_id: Optional[str] = None
 
-# RAGマネージャー初期化
-rag_manager = RAGManager()
+# データベースマネージャー初期化
+db_manager = DBManager(db_path="./chatbot.db")
+
+# RAGマネージャー初期化（DBマネージャーを渡す）
+rag_manager = RAGManager(db_manager=db_manager)
 
 class ChatRequest(BaseModel):
     message: str
@@ -63,6 +68,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 0.7
     use_rag: Optional[bool] = False
     rag_k: Optional[int] = 3
+    session_id: Optional[str] = None  # セッションID（省略時は自動生成）
+    score_threshold: Optional[float] = None  # RAGスコア閾値（デフォルト: None=フィルタリングなし）
 
 class ModelSelectRequest(BaseModel):
     model_id: str
@@ -70,7 +77,7 @@ class ModelSelectRequest(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "HuggingFace LLM Chatbot API with RAG",
+        "message": "HuggingFace LLM Chatbot API with RAG & Database",
         "endpoints": {
             "/models": "利用可能なモデル一覧",
             "/chat": "チャット（POST）",
@@ -78,7 +85,13 @@ async def root():
             "/model/current": "現在のモデル情報",
             "/documents/upload": "ドキュメントアップロード（POST）",
             "/documents/list": "ドキュメント一覧（GET）",
-            "/documents/delete": "全ドキュメント削除（DELETE）"
+            "/documents/delete": "全ドキュメント削除（DELETE）",
+            "/chat/history/{session_id}": "セッション別チャット履歴（GET）",
+            "/chat/history": "全チャット履歴（GET）",
+            "/rag/searches": "RAG検索履歴（GET）",
+            "/rag/popular-queries": "人気の検索クエリ（GET）",
+            "/statistics": "データベース統計情報（GET）",
+            "/health": "ヘルスチェック"
         }
     }
 
@@ -167,6 +180,9 @@ async def chat(request: ChatRequest):
     """チャットメッセージを処理（RAG対応）"""
     global current_model_id
 
+    # セッションIDの生成または取得
+    session_id = request.session_id or str(uuid.uuid4())
+
     # モデルが指定されていない場合、デフォルトを使用
     model_id = request.model_id
 
@@ -185,18 +201,76 @@ async def chat(request: ChatRequest):
         # RAG使用時は関連ドキュメントを検索
         retrieved_docs = []
         if request.use_rag:
-            logger.info(f"RAG検索を実行: k={request.rag_k}")
-            retrieved_docs = rag_manager.search(request.message, k=request.rag_k)
+            # メタデータのみの要求かどうかを検出
+            metadata_only_keywords = ["ファイル名", "ファイル一覧", "リスト", "列挙", "一覧"]
+            no_content_keywords = ["内容は表示しない", "内容を表示しない", "ファイル名だけ", "ファイル名のみ"]
+
+            is_metadata_only = (
+                any(keyword in request.message for keyword in metadata_only_keywords) and
+                any(keyword in request.message for keyword in no_content_keywords)
+            )
+
+            # メタデータのみの場合はドキュメント一覧を返す
+            if is_metadata_only:
+                logger.info("メタデータのみの要求を検出")
+                all_docs = rag_manager.get_documents()
+
+                if all_docs:
+                    answer_parts = [f"アップロード済みのドキュメント（全{len(all_docs)}件）：\n"]
+                    for i, doc in enumerate(all_docs, 1):
+                        answer_parts.append(f"{i}. {doc['filename']}")
+                    response_text = "\n".join(answer_parts)
+                else:
+                    response_text = "アップロードされたドキュメントはありません。"
+
+                # チャット履歴をDBに保存
+                db_manager.save_chat(
+                    session_id=session_id,
+                    user_message=request.message,
+                    bot_response=response_text,
+                    model_id=model_id,
+                    use_rag=False,  # メタデータ取得のみなのでRAG検索ではない
+                    retrieved_docs_count=len(all_docs) if all_docs else 0
+                )
+
+                return {
+                    "status": "success",
+                    "response": response_text,
+                    "model_id": model_id,
+                    "input": request.message,
+                    "retrieved_docs": [],
+                    "context_used": False,
+                    "metadata_only": True,
+                    "session_id": session_id
+                }
+
+            # 通常のRAG検索
+            logger.info(f"RAG検索を実行: k={request.rag_k}, score_threshold={request.score_threshold}")
+            retrieved_docs = rag_manager.search(
+                request.message,
+                k=request.rag_k,
+                score_threshold=request.score_threshold
+            )
 
             if retrieved_docs:
                 # RAG有効時は検索結果を直接まとめて返す
                 logger.info(f"{len(retrieved_docs)}件のドキュメントを発見")
 
+                # 同じファイルからの重複を除去（最もスコアの高いもののみ残す）
+                unique_docs = {}
+                for doc in retrieved_docs:
+                    source = doc['source']
+                    if source not in unique_docs or doc['score'] < unique_docs[source]['score']:
+                        unique_docs[source] = doc
+
+                unique_docs_list = list(unique_docs.values())
+                logger.info(f"重複除去後: {len(unique_docs_list)}件のユニークなドキュメント")
+
                 # 検索結果をまとめて回答を生成
                 answer_parts = []
-                answer_parts.append(f"アップロードされたドキュメントから{len(retrieved_docs)}件の関連情報が見つかりました：\n")
+                answer_parts.append(f"アップロードされたドキュメントから{len(unique_docs_list)}件の関連情報が見つかりました：\n")
 
-                for i, doc in enumerate(retrieved_docs, 1):
+                for i, doc in enumerate(unique_docs_list, 1):
                     source = doc['source']
                     content = doc['content'][:300]  # 最初の300文字
                     answer_parts.append(f"\n【{i}. {source}】")
@@ -207,26 +281,50 @@ async def chat(request: ChatRequest):
                 # 検索ベースの回答を直接返す（LLM生成なし）
                 response_text = "\n".join(answer_parts)
 
+                # チャット履歴をDBに保存
+                db_manager.save_chat(
+                    session_id=session_id,
+                    user_message=request.message,
+                    bot_response=response_text,
+                    model_id=model_id,
+                    use_rag=True,
+                    retrieved_docs_count=len(unique_docs_list)
+                )
+
                 response_data = {
                     "status": "success",
                     "response": response_text,
                     "model_id": model_id,
                     "input": request.message,
-                    "retrieved_docs": retrieved_docs,
+                    "retrieved_docs": unique_docs_list,
                     "context_used": True,
-                    "rag_direct_answer": True  # RAGの直接回答であることを示す
+                    "rag_direct_answer": True,  # RAGの直接回答であることを示す
+                    "session_id": session_id
                 }
 
                 return response_data
             else:
                 # 検索結果がない場合
+                no_result_message = "アップロードされたドキュメントから関連する情報が見つかりませんでした。"
+
+                # チャット履歴をDBに保存
+                db_manager.save_chat(
+                    session_id=session_id,
+                    user_message=request.message,
+                    bot_response=no_result_message,
+                    model_id=model_id,
+                    use_rag=True,
+                    retrieved_docs_count=0
+                )
+
                 response_data = {
                     "status": "success",
-                    "response": "アップロードされたドキュメントから関連する情報が見つかりませんでした。",
+                    "response": no_result_message,
                     "model_id": model_id,
                     "input": request.message,
                     "retrieved_docs": [],
-                    "context_used": False
+                    "context_used": False,
+                    "session_id": session_id
                 }
 
                 return response_data
@@ -250,11 +348,22 @@ async def chat(request: ChatRequest):
 
         generated_text = result[0]["generated_text"]
 
+        # チャット履歴をDBに保存
+        db_manager.save_chat(
+            session_id=session_id,
+            user_message=request.message,
+            bot_response=generated_text,
+            model_id=model_id,
+            use_rag=False,
+            retrieved_docs_count=0
+        )
+
         response_data = {
             "status": "success",
             "response": generated_text,
             "model_id": model_id,
-            "input": request.message
+            "input": request.message,
+            "session_id": session_id
         }
 
         return response_data
@@ -327,17 +436,102 @@ async def delete_all_documents():
         logger.error(f"ドキュメント削除エラー: {str(e)}")
         raise HTTPException(status_code=500, detail=f"ドキュメント削除に失敗しました: {str(e)}")
 
+@app.get("/chat/history/{session_id}")
+async def get_chat_history_by_session(session_id: str, limit: int = 50):
+    """セッション別のチャット履歴を取得"""
+    try:
+        history = db_manager.get_chat_history(session_id, limit)
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "count": len(history),
+            "history": history
+        }
+    except Exception as e:
+        logger.error(f"チャット履歴取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"チャット履歴の取得に失敗しました: {str(e)}")
+
+@app.get("/chat/history")
+async def get_all_chat_history(limit: int = 100):
+    """全チャット履歴を取得"""
+    try:
+        history = db_manager.get_all_chat_history(limit)
+        return {
+            "status": "success",
+            "count": len(history),
+            "history": history
+        }
+    except Exception as e:
+        logger.error(f"チャット履歴取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"チャット履歴の取得に失敗しました: {str(e)}")
+
+@app.delete("/chat/history/{session_id}")
+async def delete_chat_history_by_session(session_id: str):
+    """セッション別のチャット履歴を削除"""
+    try:
+        db_manager.delete_chat_history(session_id)
+        return {
+            "status": "success",
+            "message": f"セッション {session_id} の履歴を削除しました"
+        }
+    except Exception as e:
+        logger.error(f"チャット履歴削除エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"チャット履歴の削除に失敗しました: {str(e)}")
+
+@app.get("/rag/searches")
+async def get_rag_searches(limit: int = 50):
+    """RAG検索履歴を取得"""
+    try:
+        searches = db_manager.get_rag_searches(limit)
+        return {
+            "status": "success",
+            "count": len(searches),
+            "searches": searches
+        }
+    except Exception as e:
+        logger.error(f"RAG検索履歴取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"RAG検索履歴の取得に失敗しました: {str(e)}")
+
+@app.get("/rag/popular-queries")
+async def get_popular_queries(limit: int = 10):
+    """人気の検索クエリを取得"""
+    try:
+        queries = db_manager.get_popular_queries(limit)
+        return {
+            "status": "success",
+            "count": len(queries),
+            "queries": queries
+        }
+    except Exception as e:
+        logger.error(f"人気クエリ取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"人気クエリの取得に失敗しました: {str(e)}")
+
+@app.get("/statistics")
+async def get_statistics():
+    """データベース統計情報を取得"""
+    try:
+        stats = db_manager.get_statistics()
+        return {
+            "status": "success",
+            "statistics": stats
+        }
+    except Exception as e:
+        logger.error(f"統計情報取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"統計情報の取得に失敗しました: {str(e)}")
+
 @app.get("/health")
 async def health_check():
     """ヘルスチェック"""
     documents = rag_manager.get_documents()
+    stats = db_manager.get_statistics()
     return {
         "status": "healthy",
         "cuda_available": torch.cuda.is_available(),
         "loaded_models": list(model_cache.keys()),
         "current_model": current_model_id,
         "rag_enabled": True,
-        "documents_count": len(documents)
+        "documents_count": len(documents),
+        "database_stats": stats
     }
 
 if __name__ == "__main__":

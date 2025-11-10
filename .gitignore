@@ -98,5 +98,10 @@ backend/vector_store/
 *.faiss
 *.pkl
 
+# Database files
+backend/*.db
+backend/test_*.db
+*.db
+
 # User-specific files
 .history/

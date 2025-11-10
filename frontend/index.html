@@ -17,6 +17,7 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             display: flex;
             flex-direction: column;
+            overflow: hidden; /* ボディのスクロールを無効化 */
         }
 
         .header {
@@ -82,6 +83,8 @@
             width: 100%;
             margin: 20px auto;
             padding: 0 20px;
+            overflow: hidden; /* メインコンテナのスクロールも無効化 */
+            min-height: 0; /* flexアイテムがオーバーフローしないようにする */
         }
 
         .sidebar {
@@ -93,6 +96,8 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
+            overflow: hidden; /* サイドバー全体のスクロールを無効化 */
+            min-height: 0; /* flexアイテムがオーバーフローしないようにする */
         }
 
         .sidebar h2 {
@@ -168,8 +173,9 @@
             flex-direction: column;
             background: white;
             border-radius: 10px;
-            overflow: hidden;
+            overflow: hidden; /* チャットコンテナ自体のスクロールを無効化 */
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            min-height: 0; /* flexアイテムがオーバーフローしないようにする */
         }
 
         .settings {
@@ -209,10 +215,31 @@
         .messages {
             flex: 1;
             padding: 20px;
-            overflow-y: auto;
+            overflow-y: auto; /* メッセージエリアのみスクロール可能 */
+            overflow-x: hidden; /* 横スクロールは無効化 */
             display: flex;
             flex-direction: column;
             gap: 15px;
+            min-height: 0; /* flexアイテムのオーバーフローを許可 */
+        }
+
+        /* スクロールバーのスタイリング（Webkit系ブラウザ用） */
+        .messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .messages::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+
+        .messages::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
 
         .message {

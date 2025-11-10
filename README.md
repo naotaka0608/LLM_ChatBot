@@ -8,9 +8,11 @@
 - 💬 リアルタイムチャットインターフェース
 - 📚 **RAG機能**: PDF/TXT/MDファイルをアップロードして参照可能
 - 🔍 **ベクトル検索**: FAISS + HuggingFace Embeddingsによる高速検索
+- 💾 **データベース保存**: SQLiteによるチャット履歴・ドキュメント情報・検索履歴の永続化
+- 📊 **統計情報**: チャット履歴、RAG検索、人気クエリなどの分析機能
 - 🎛️ Temperature、最大長などのパラメータ調整
 - 🔄 モデルの動的ロード・切り替え
-- 💾 モデルキャッシュによる高速化
+- ⚡ モデルキャッシュによる高速化
 
 ## プロジェクト構成
 
@@ -20,8 +22,11 @@
 │   ├── Pipfile          # Python依存関係
 │   ├── main.py          # FastAPI + HuggingFace + RAG実装
 │   ├── rag_manager.py   # RAG機能（ドキュメント処理・検索）
+│   ├── db_manager.py    # SQLiteデータベース管理
+│   ├── test_database.py # データベース機能テスト
 │   ├── uploads/         # アップロードファイル保存先
-│   └── vector_store/    # FAISSベクトルDB永続化
+│   ├── vector_store/    # FAISSベクトルDB永続化
+│   └── chatbot.db       # SQLiteデータベースファイル
 ├── frontend/            # Electronアプリ
 │   ├── package.json     # Node.js依存関係
 │   ├── main.js          # Electronメインプロセス
@@ -110,10 +115,40 @@ npm start
    - 「取得数」でドキュメントから検索する情報の件数を設定（1-10件）
    - 質問を入力して送信
    - アップロードしたドキュメントから関連情報を検索し、回答に反映されます
+   - **重複排除**: 同じファイルから複数のチャンクがヒットした場合、最もスコアの高いものだけを表示します
 
 3. **ドキュメント管理**
    - サイドバーでアップロード済みドキュメントを確認
    - 「全て削除」ボタンですべてのドキュメントを削除可能
+
+4. **ファイル名のみの表示**
+   - RAGを使用中でも、「ファイル名を列挙して。内容は表示しないで。」のように質問すると、ドキュメントの内容ではなくファイル名の一覧のみを表示します
+   - 以下のようなキーワードの組み合わせで検出：
+     - ファイル名系: 「ファイル名」「ファイル一覧」「リスト」「列挙」「一覧」
+     - 内容非表示系: 「内容は表示しない」「内容を表示しない」「ファイル名だけ」「ファイル名のみ」
+
+### RAGスコアフィルタリング
+
+関連性の低い検索結果を除外するために、スコア閾値を設定できます：
+
+- **score_threshold**: 検索結果の類似度スコア閾値（デフォルト: None）
+  - FAISSは距離スコアを使用（小さいほど類似度が高い）
+  - この値以下の結果のみを返します
+  - 推奨値:
+    - `0.5` - 非常に厳格（高精度な結果のみ）
+    - `1.0` - 標準的（関連性の高い結果）
+    - `1.5` - 緩め（より多くの結果を含む）
+    - `None` - フィルタリングなし（全結果を返す、デフォルト）
+
+**使用例**（API経由）:
+```json
+{
+  "message": "チームラボの合計金額は？",
+  "use_rag": true,
+  "rag_k": 3,
+  "score_threshold": 1.0
+}
+```
 
 ## 利用可能なモデル
 
@@ -154,6 +189,14 @@ FastAPIサーバーは以下のエンドポイントを提供します：
 - `POST /documents/upload` - ドキュメントをアップロード（PDF/TXT/MD）
 - `GET /documents/list` - アップロード済みドキュメント一覧
 - `DELETE /documents/delete` - 全ドキュメントを削除
+
+### データベース・履歴関連
+- `GET /chat/history/{session_id}` - セッション別チャット履歴を取得
+- `GET /chat/history` - 全チャット履歴を取得
+- `DELETE /chat/history/{session_id}` - セッション別チャット履歴を削除
+- `GET /rag/searches` - RAG検索履歴を取得
+- `GET /rag/popular-queries` - 人気の検索クエリを取得
+- `GET /statistics` - データベース統計情報を取得
 
 ### その他
 - `GET /docs` - Swagger UI（APIドキュメント）
@@ -196,7 +239,63 @@ curl -X POST http://localhost:8000/documents/upload \
 
 # ドキュメント一覧を取得
 curl http://localhost:8000/documents/list
+
+# チャット履歴を取得
+curl http://localhost:8000/chat/history
+
+# 統計情報を取得
+curl http://localhost:8000/statistics
+
+# 人気クエリを取得
+curl http://localhost:8000/rag/popular-queries
 ```
+
+## データベース機能
+
+このアプリケーションは、SQLiteデータベースを使用して以下の情報を永続化しています：
+
+### 保存されるデータ
+
+1. **チャット履歴** (`chat_history` テーブル)
+   - セッションID
+   - ユーザーメッセージ
+   - ボットの応答
+   - 使用したモデルID
+   - RAG使用有無
+   - タイムスタンプ
+
+2. **ドキュメント情報** (`documents` テーブル)
+   - ファイル名
+   - ファイルパス
+   - チャンク数
+   - 文字数
+   - アップロード日時
+
+3. **RAG検索履歴** (`rag_searches` テーブル)
+   - 検索クエリ
+   - 取得したドキュメント情報（JSON）
+   - タイムスタンプ
+
+### データベーステスト
+
+データベース機能の動作確認：
+```bash
+cd backend
+python test_database.py
+```
+
+### データベースの場所
+
+- 本番: `backend/chatbot.db`
+- テスト: `backend/test_chatbot.db`
+
+### データベースのリセット
+
+データベースをリセットする場合は、該当のDBファイルを削除してください：
+```bash
+rm backend/chatbot.db
+```
+次回起動時に新しいデータベースが自動的に作成されます。
 
 ## トラブルシューティング
 
