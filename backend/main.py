@@ -202,12 +202,21 @@ async def chat(request: ChatRequest):
         retrieved_docs = []
         if request.use_rag:
             # メタデータのみの要求かどうかを検出
-            metadata_only_keywords = ["ファイル名", "ファイル一覧", "リスト", "列挙", "一覧"]
+            # パターン1: 「ファイル名を列挙」のようにファイル名系 + 動詞の組み合わせ
+            # パターン2: 「ファイル名だけ」「内容は表示しない」のような明示的な指示
+            metadata_list_keywords = ["ファイル名", "ファイル一覧", "ドキュメント一覧"]
+            action_keywords = ["列挙", "教えて", "見せて", "表示", "リスト"]
             no_content_keywords = ["内容は表示しない", "内容を表示しない", "ファイル名だけ", "ファイル名のみ"]
 
+            has_metadata_keyword = any(keyword in request.message for keyword in metadata_list_keywords)
+            has_action_keyword = any(keyword in request.message for keyword in action_keywords)
+            has_no_content_keyword = any(keyword in request.message for keyword in no_content_keywords)
+
+            # ファイル名系 + アクション、またはファイル名系 + 内容制限のいずれかでメタデータのみと判定
             is_metadata_only = (
-                any(keyword in request.message for keyword in metadata_only_keywords) and
-                any(keyword in request.message for keyword in no_content_keywords)
+                (has_metadata_keyword and has_action_keyword) or
+                (has_metadata_keyword and has_no_content_keyword) or
+                has_no_content_keyword
             )
 
             # メタデータのみの場合はドキュメント一覧を返す

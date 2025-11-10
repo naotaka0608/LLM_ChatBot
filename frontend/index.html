@@ -424,6 +424,11 @@
                     取得数:
                     <input type="number" id="ragK" value="3" min="1" max="10">
                 </label>
+                <label id="scoreThresholdLabel" style="display: none;">
+                    スコア閾値:
+                    <input type="range" id="scoreThreshold" value="1.0" min="0" max="2.0" step="0.1">
+                    <span id="scoreThresholdValue">1.0</span>
+                </label>
             </div>
 
             <div class="messages" id="messages">
@@ -461,6 +466,7 @@
             await loadAvailableModels();
             await loadDocuments();
             updateTemperatureDisplay();
+            updateScoreThresholdDisplay();
             setupRAGToggle();
         }
 
@@ -468,9 +474,12 @@
         function setupRAGToggle() {
             const useRAGCheckbox = document.getElementById('useRAG');
             const ragKLabel = document.getElementById('ragKLabel');
+            const scoreThresholdLabel = document.getElementById('scoreThresholdLabel');
 
             useRAGCheckbox.addEventListener('change', (e) => {
-                ragKLabel.style.display = e.target.checked ? 'flex' : 'none';
+                const isChecked = e.target.checked;
+                ragKLabel.style.display = isChecked ? 'flex' : 'none';
+                scoreThresholdLabel.style.display = isChecked ? 'flex' : 'none';
             });
         }
 
@@ -549,6 +558,16 @@
             const tempValue = document.getElementById('tempValue');
             tempSlider.addEventListener('input', (e) => {
                 tempValue.textContent = e.target.value;
+            });
+        }
+
+        // スコア閾値表示を更新
+        function updateScoreThresholdDisplay() {
+            const scoreSlider = document.getElementById('scoreThreshold');
+            const scoreValue = document.getElementById('scoreThresholdValue');
+            scoreSlider.addEventListener('input', (e) => {
+                const value = e.target.value;
+                scoreValue.textContent = value === '0' ? 'なし' : value;
             });
         }
 
@@ -662,18 +681,26 @@
                 const temperature = parseFloat(document.getElementById('temperature').value);
                 const useRAG = document.getElementById('useRAG').checked;
                 const ragK = parseInt(document.getElementById('ragK').value);
+                const scoreThreshold = parseFloat(document.getElementById('scoreThreshold').value);
+
+                const requestBody = {
+                    message: message,
+                    model_id: currentModel,
+                    max_length: maxLength,
+                    temperature: temperature,
+                    use_rag: useRAG,
+                    rag_k: ragK
+                };
+
+                // スコア閾値が0の場合はnull（フィルタリングなし）、それ以外は値を設定
+                if (useRAG) {
+                    requestBody.score_threshold = scoreThreshold === 0 ? null : scoreThreshold;
+                }
 
                 const response = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        message: message,
-                        model_id: currentModel,
-                        max_length: maxLength,
-                        temperature: temperature,
-                        use_rag: useRAG,
-                        rag_k: ragK
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 const data = await response.json();

@@ -42,13 +42,24 @@ test_cases = [
     },
     {
         "message": "ファイル名を教えて",
-        "expected": False,
-        "description": "キーワードが1種類のみ（内容制限なし）"
+        "expected": True,
+        "description": "ファイル名系 + アクション（教えて）"
+    },
+    {
+        "message": "アップロードしたファイル名を列挙して",
+        "expected": True,
+        "description": "ファイル名系 + アクション（列挙）のみ"
+    },
+    {
+        "message": "ファイル一覧を見せて",
+        "expected": True,
+        "description": "ファイル名系 + アクション（見せて）"
     }
 ]
 
 # 検出ロジック（main.pyと同じ）
-metadata_only_keywords = ["ファイル名", "ファイル一覧", "リスト", "列挙", "一覧"]
+metadata_list_keywords = ["ファイル名", "ファイル一覧", "ドキュメント一覧"]
+action_keywords = ["列挙", "教えて", "見せて", "表示", "リスト"]
 no_content_keywords = ["内容は表示しない", "内容を表示しない", "ファイル名だけ", "ファイル名のみ"]
 
 print("=" * 70)
@@ -64,9 +75,14 @@ for i, test in enumerate(test_cases, 1):
     description = test["description"]
 
     # 検出ロジック
+    has_metadata_keyword = any(keyword in message for keyword in metadata_list_keywords)
+    has_action_keyword = any(keyword in message for keyword in action_keywords)
+    has_no_content_keyword = any(keyword in message for keyword in no_content_keywords)
+
     is_metadata_only = (
-        any(keyword in message for keyword in metadata_only_keywords) and
-        any(keyword in message for keyword in no_content_keywords)
+        (has_metadata_keyword and has_action_keyword) or
+        (has_metadata_keyword and has_no_content_keyword) or
+        has_no_content_keyword
     )
 
     # 結果判定
