@@ -1,6 +1,6 @@
 """
 データベース管理モジュール
-SQLiteを使用してチャット履歴、ドキュメント情報、RAG検索履歴を管理
+SQLiteを使用してチャット履歴、ドキュメント情報、RAG検索履歴、ユーザー情報を管理
 """
 
 import sqlite3
@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from pathlib import Path
 import logging
+import hashlib
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,18 @@ class DBManager:
             )
         """)
 
+        # ユーザーテーブル
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_login DATETIME
+            )
+        """)
+
         # インデックス作成（検索パフォーマンス向上）
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_chat_session
@@ -94,6 +108,14 @@ class DBManager:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_rag_timestamp
             ON rag_searches(timestamp)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_username
+            ON users(username)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_email
+            ON users(email)
         """)
 
         self.conn.commit()
@@ -370,6 +392,122 @@ class DBManager:
         cursor.execute("DELETE FROM rag_searches")
         self.conn.commit()
         logger.info("全てのRAG検索履歴を削除")
+
+    # ==================== ユーザー認証関連 ====================
+
+    def _hash_password(self, password: str) -> str:
+        """
+        パスワードをハッシュ化
+
+        Args:
+            password: 平文のパスワード
+
+        Returns:
+            ハッシュ化されたパスワード
+        """
+        return hashlib.sha256(password.encode()).hexdigest()
+
+    def create_user(self, username: str, email: str, password: str) -> Optional[int]:
+        """
+        新規ユーザーを作成
+
+        Args:
+            username: ユーザー名
+            email: メールアドレス
+            password: パスワード
+
+        Returns:
+            作成されたユーザーID（失敗時はNone）
+        """
+        cursor = self.conn.cursor()
+        password_hash = self._hash_password(password)
+
+        try:
+            cursor.execute("""
+                INSERT INTO users (username, email, password_hash)
+                VALUES (?, ?, ?)
+            """, (username, email, password_hash))
+            self.conn.commit()
+            user_id = cursor.lastrowid
+            logger.info(f"新規ユーザー作成: {username} (ID={user_id})")
+            return user_id
+        except sqlite3.IntegrityError as e:
+            logger.warning(f"ユーザー作成失敗: {e}")
+            return None
+
+    def verify_user(self, username: str, password: str) -> Optional[Dict]:
+        """
+        ユーザー認証
+
+        Args:
+            username: ユーザー名
+            password: パスワード
+
+        Returns:
+            認証成功時はユーザー情報、失敗時はNone
+        """
+        cursor = self.conn.cursor()
+        password_hash = self._hash_password(password)
+
+        cursor.execute("""
+            SELECT id, username, email, created_at
+            FROM users
+            WHERE username = ? AND password_hash = ?
+        """, (username, password_hash))
+
+        row = cursor.fetchone()
+        if row:
+            user_dict = dict(row)
+            # 最終ログイン時刻を更新
+            cursor.execute("""
+                UPDATE users
+                SET last_login = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (user_dict['id'],))
+            self.conn.commit()
+            logger.info(f"ユーザー認証成功: {username}")
+            return user_dict
+        else:
+            logger.warning(f"ユーザー認証失敗: {username}")
+            return None
+
+    def get_user_by_username(self, username: str) -> Optional[Dict]:
+        """
+        ユーザー名でユーザー情報を取得
+
+        Args:
+            username: ユーザー名
+
+        Returns:
+            ユーザー情報（存在しない場合はNone）
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, username, email, created_at, last_login
+            FROM users
+            WHERE username = ?
+        """, (username,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> Optional[Dict]:
+        """
+        メールアドレスでユーザー情報を取得
+
+        Args:
+            email: メールアドレス
+
+        Returns:
+            ユーザー情報（存在しない場合はNone）
+        """
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, username, email, created_at, last_login
+            FROM users
+            WHERE email = ?
+        """, (email,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
 
     # ==================== 統計情報 ====================
 

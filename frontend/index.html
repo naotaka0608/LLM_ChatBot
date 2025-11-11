@@ -370,9 +370,185 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+
+        /* 認証画面のスタイル */
+        #authScreen {
+            display: none;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+
+        .auth-container {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 400px;
+            max-width: 90%;
+        }
+
+        .auth-container h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .auth-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .auth-tab {
+            flex: 1;
+            padding: 12px;
+            background: #f0f0f0;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .auth-tab.active {
+            background: #667eea;
+            color: white;
+        }
+
+        .auth-form {
+            display: none;
+        }
+
+        .auth-form.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .auth-button {
+            width: 100%;
+            padding: 14px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .auth-button:hover {
+            background: #764ba2;
+        }
+
+        .auth-button:active {
+            transform: scale(0.98);
+        }
+
+        #mainScreen {
+            display: none;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .signout-btn {
+            padding: 8px 15px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .signout-btn:hover {
+            background: #c82333;
+        }
     </style>
 </head>
 <body>
+    <!-- 認証画面 -->
+    <div id="authScreen">
+        <div class="auth-container">
+            <h1>🤖 LLM Chatbot</h1>
+
+            <div class="auth-tabs">
+                <button id="signinTab" class="auth-tab active" onclick="switchAuthMode('signin')">サインイン</button>
+                <button id="signupTab" class="auth-tab" onclick="switchAuthMode('signup')">サインアップ</button>
+            </div>
+
+            <!-- サインインフォーム -->
+            <div id="signinForm" class="auth-form active">
+                <div class="form-group">
+                    <label>ユーザー名</label>
+                    <input type="text" id="signinUsername" placeholder="ユーザー名を入力" onkeypress="if(event.key==='Enter') signin()">
+                </div>
+                <div class="form-group">
+                    <label>パスワード</label>
+                    <input type="password" id="signinPassword" placeholder="パスワードを入力" onkeypress="if(event.key==='Enter') signin()">
+                </div>
+                <button class="auth-button" onclick="signin()">サインイン</button>
+            </div>
+
+            <!-- サインアップフォーム -->
+            <div id="signupForm" class="auth-form">
+                <div class="form-group">
+                    <label>ユーザー名</label>
+                    <input type="text" id="signupUsername" placeholder="3文字以上のユーザー名">
+                </div>
+                <div class="form-group">
+                    <label>メールアドレス</label>
+                    <input type="email" id="signupEmail" placeholder="email@example.com">
+                </div>
+                <div class="form-group">
+                    <label>パスワード</label>
+                    <input type="password" id="signupPassword" placeholder="6文字以上のパスワード">
+                </div>
+                <div class="form-group">
+                    <label>パスワード（確認）</label>
+                    <input type="password" id="signupConfirmPassword" placeholder="パスワードを再入力" onkeypress="if(event.key==='Enter') signup()">
+                </div>
+                <button class="auth-button" onclick="signup()">サインアップ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- メイン画面 -->
+    <div id="mainScreen">
     <div class="header">
         <h1>🤖 LLM Chatbot with RAG</h1>
         <div class="model-selector">
@@ -382,6 +558,10 @@
             </select>
             <button onclick="loadSelectedModel()">読み込み</button>
             <span class="status" id="modelStatus"></span>
+        </div>
+        <div class="user-info">
+            <span>ユーザー: <strong id="currentUsername"></strong></span>
+            <button class="signout-btn" onclick="signout()">サインアウト</button>
         </div>
     </div>
 
@@ -460,14 +640,183 @@
         const API_URL = 'http://localhost:8000';
         let currentModel = null;
         let availableModels = {};
+        let authToken = null;
+        let currentUser = null;
+
+        // 初期化フラグ
+        let isInitialized = false;
 
         // 初期化
         async function init() {
-            await loadAvailableModels();
-            await loadDocuments();
+            if (isInitialized) return;
+            isInitialized = true;
+
+            // ローカルストレージからトークンを取得
+            authToken = localStorage.getItem('authToken');
+            currentUser = localStorage.getItem('currentUser');
+
+            // イベントリスナーを設定（一度だけ）
             updateTemperatureDisplay();
             updateScoreThresholdDisplay();
             setupRAGToggle();
+
+            if (authToken) {
+                // 認証済みの場合、メイン画面を表示
+                showMainScreen();
+                await loadAvailableModels();
+                await loadDocuments();
+            } else {
+                // 未認証の場合、サインイン画面を表示
+                showAuthScreen();
+            }
+        }
+
+        // 認証画面を表示
+        function showAuthScreen() {
+            document.getElementById('authScreen').style.display = 'flex';
+            document.getElementById('mainScreen').style.display = 'none';
+        }
+
+        // メイン画面を表示
+        function showMainScreen() {
+            document.getElementById('authScreen').style.display = 'none';
+            document.getElementById('mainScreen').style.display = 'flex';
+            if (currentUser) {
+                document.getElementById('currentUsername').textContent = currentUser;
+            }
+        }
+
+        // サインイン・サインアップ切り替え
+        function switchAuthMode(mode) {
+            const signinForm = document.getElementById('signinForm');
+            const signupForm = document.getElementById('signupForm');
+            const signinTab = document.getElementById('signinTab');
+            const signupTab = document.getElementById('signupTab');
+
+            if (mode === 'signin') {
+                signinForm.style.display = 'block';
+                signupForm.style.display = 'none';
+                signinTab.classList.add('active');
+                signupTab.classList.remove('active');
+            } else {
+                signinForm.style.display = 'none';
+                signupForm.style.display = 'block';
+                signinTab.classList.remove('active');
+                signupTab.classList.add('active');
+            }
+        }
+
+        // サインイン
+        async function signin() {
+            const username = document.getElementById('signinUsername').value.trim();
+            const password = document.getElementById('signinPassword').value;
+
+            if (!username || !password) {
+                alert('ユーザー名とパスワードを入力してください');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/signin`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = data.username;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', currentUser);
+                    showMainScreen();
+                    await loadAvailableModels();
+                    await loadDocuments();
+                } else {
+                    alert(`エラー: ${data.detail}`);
+                }
+            } catch (error) {
+                alert(`エラー: ${error.message}`);
+            }
+        }
+
+        // サインアップ
+        async function signup() {
+            const username = document.getElementById('signupUsername').value.trim();
+            const email = document.getElementById('signupEmail').value.trim();
+            const password = document.getElementById('signupPassword').value;
+            const confirmPassword = document.getElementById('signupConfirmPassword').value;
+
+            if (!username || !email || !password || !confirmPassword) {
+                alert('全ての項目を入力してください');
+                return;
+            }
+
+            if (password !== confirmPassword) {
+                alert('パスワードが一致しません');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/signup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    authToken = data.token;
+                    currentUser = data.username;
+                    localStorage.setItem('authToken', authToken);
+                    localStorage.setItem('currentUser', currentUser);
+                    showMainScreen();
+                    await loadAvailableModels();
+                    await loadDocuments();
+                } else {
+                    alert(`エラー: ${data.detail}`);
+                }
+            } catch (error) {
+                alert(`エラー: ${error.message}`);
+            }
+        }
+
+        // サインアウト
+        async function signout() {
+            try {
+                await fetch(`${API_URL}/signout`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+
+                authToken = null;
+                currentUser = null;
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('currentUser');
+                showAuthScreen();
+
+                // フォームをリセット
+                document.getElementById('signinUsername').value = '';
+                document.getElementById('signinPassword').value = '';
+                document.getElementById('signupUsername').value = '';
+                document.getElementById('signupEmail').value = '';
+                document.getElementById('signupPassword').value = '';
+                document.getElementById('signupConfirmPassword').value = '';
+            } catch (error) {
+                console.error('サインアウトエラー:', error);
+            }
+        }
+
+        // APIリクエストにAuthorizationヘッダーを追加するヘルパー関数
+        function getAuthHeaders() {
+            return {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            };
         }
 
         // RAGトグルのセットアップ
@@ -476,11 +825,11 @@
             const ragKLabel = document.getElementById('ragKLabel');
             const scoreThresholdLabel = document.getElementById('scoreThresholdLabel');
 
-            useRAGCheckbox.addEventListener('change', (e) => {
+            useRAGCheckbox.onchange = (e) => {
                 const isChecked = e.target.checked;
                 ragKLabel.style.display = isChecked ? 'flex' : 'none';
                 scoreThresholdLabel.style.display = isChecked ? 'flex' : 'none';
-            });
+            };
         }
 
         // 利用可能なモデルを取得
@@ -556,19 +905,19 @@
         function updateTemperatureDisplay() {
             const tempSlider = document.getElementById('temperature');
             const tempValue = document.getElementById('tempValue');
-            tempSlider.addEventListener('input', (e) => {
+            tempSlider.oninput = (e) => {
                 tempValue.textContent = e.target.value;
-            });
+            };
         }
 
         // スコア閾値表示を更新
         function updateScoreThresholdDisplay() {
             const scoreSlider = document.getElementById('scoreThreshold');
             const scoreValue = document.getElementById('scoreThresholdValue');
-            scoreSlider.addEventListener('input', (e) => {
+            scoreSlider.oninput = (e) => {
                 const value = e.target.value;
                 scoreValue.textContent = value === '0' ? 'なし' : value;
-            });
+            };
         }
 
         // ファイルアップロード
@@ -585,6 +934,9 @@
             try {
                 const response = await fetch(`${API_URL}/documents/upload`, {
                     method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    },
                     body: formData
                 });
 
@@ -594,7 +946,12 @@
                     addSystemMessage(`ファイル「${file.name}」をアップロードしました。`);
                     await loadDocuments();
                 } else {
-                    addSystemMessage(`エラー: ${data.detail}`);
+                    if (response.status === 401) {
+                        alert('認証が切れました。再度サインインしてください。');
+                        signout();
+                    } else {
+                        addSystemMessage(`エラー: ${data.detail}`);
+                    }
                 }
             } catch (error) {
                 addSystemMessage(`エラー: ${error.message}`);
@@ -637,7 +994,10 @@
 
             try {
                 const response = await fetch(`${API_URL}/documents/delete`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
                 });
 
                 const data = await response.json();
@@ -646,7 +1006,12 @@
                     addSystemMessage('全てのドキュメントを削除しました。');
                     await loadDocuments();
                 } else {
-                    addSystemMessage(`エラー: ${data.detail}`);
+                    if (response.status === 401) {
+                        alert('認証が切れました。再度サインインしてください。');
+                        signout();
+                    } else {
+                        addSystemMessage(`エラー: ${data.detail}`);
+                    }
                 }
             } catch (error) {
                 addSystemMessage(`エラー: ${error.message}`);
@@ -699,7 +1064,7 @@
 
                 const response = await fetch(`${API_URL}/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify(requestBody)
                 });
 
@@ -708,7 +1073,12 @@
                 if (response.ok) {
                     addMessage('bot', data.response, data.retrieved_docs);
                 } else {
-                    addSystemMessage(`エラー: ${data.detail}`);
+                    if (response.status === 401) {
+                        alert('認証が切れました。再度サインインしてください。');
+                        signout();
+                    } else {
+                        addSystemMessage(`エラー: ${data.detail}`);
+                    }
                 }
             } catch (error) {
                 addSystemMessage(`エラー: ${error.message}`);

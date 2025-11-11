@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 import shutil
 import uuid
+import secrets
 
 from rag_manager import RAGManager
 from db_manager import DBManager
@@ -61,6 +62,43 @@ db_manager = DBManager(db_path="./chatbot.db")
 # RAGマネージャー初期化（DBマネージャーを渡す）
 rag_manager = RAGManager(db_manager=db_manager)
 
+# セッショントークンの保存（本番環境ではRedisなどを使用すべき）
+active_sessions: Dict[str, str] = {}  # token -> username
+
+# 認証関数
+async def get_current_user(authorization: Optional[str] = Header(None)) -> str:
+    """
+    認証トークンからユーザー名を取得
+
+    Args:
+        authorization: Authorizationヘッダー
+
+    Returns:
+        ユーザー名
+
+    Raises:
+        HTTPException: 認証失敗時
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="認証が必要です")
+
+    token = authorization.replace("Bearer ", "")
+    username = active_sessions.get(token)
+
+    if not username:
+        raise HTTPException(status_code=401, detail="無効なトークンです")
+
+    return username
+
+class SignUpRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class SignInRequest(BaseModel):
+    username: str
+    password: str
+
 class ChatRequest(BaseModel):
     message: str
     model_id: Optional[str] = "gpt2"
@@ -77,15 +115,19 @@ class ModelSelectRequest(BaseModel):
 @app.get("/")
 async def root():
     return {
-        "message": "HuggingFace LLM Chatbot API with RAG & Database",
+        "message": "HuggingFace LLM Chatbot API with RAG & Database & Authentication",
         "endpoints": {
+            "/signup": "サインアップ（POST）",
+            "/signin": "サインイン（POST）",
+            "/signout": "サインアウト（POST）",
+            "/me": "ユーザー情報取得（GET、認証必要）",
             "/models": "利用可能なモデル一覧",
-            "/chat": "チャット（POST）",
+            "/chat": "チャット（POST、認証必要）",
             "/model/select": "モデル選択（POST）",
             "/model/current": "現在のモデル情報",
-            "/documents/upload": "ドキュメントアップロード（POST）",
+            "/documents/upload": "ドキュメントアップロード（POST、認証必要）",
             "/documents/list": "ドキュメント一覧（GET）",
-            "/documents/delete": "全ドキュメント削除（DELETE）",
+            "/documents/delete": "全ドキュメント削除（DELETE、認証必要）",
             "/chat/history/{session_id}": "セッション別チャット履歴（GET）",
             "/chat/history": "全チャット履歴（GET）",
             "/rag/searches": "RAG検索履歴（GET）",
@@ -94,6 +136,113 @@ async def root():
             "/health": "ヘルスチェック"
         }
     }
+
+@app.post("/signup")
+async def signup(request: SignUpRequest):
+    """ユーザー登録"""
+    try:
+        # 入力バリデーション
+        if len(request.username) < 3:
+            raise HTTPException(status_code=400, detail="ユーザー名は3文字以上である必要があります")
+        if len(request.password) < 6:
+            raise HTTPException(status_code=400, detail="パスワードは6文字以上である必要があります")
+        if "@" not in request.email:
+            raise HTTPException(status_code=400, detail="有効なメールアドレスを入力してください")
+
+        # ユーザー名の重複チェック
+        existing_user = db_manager.get_user_by_username(request.username)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="このユーザー名は既に使用されています")
+
+        # メールアドレスの重複チェック
+        existing_email = db_manager.get_user_by_email(request.email)
+        if existing_email:
+            raise HTTPException(status_code=400, detail="このメールアドレスは既に使用されています")
+
+        # ユーザー作成
+        user_id = db_manager.create_user(request.username, request.email, request.password)
+
+        if user_id:
+            # トークン生成
+            token = secrets.token_urlsafe(32)
+            active_sessions[token] = request.username
+
+            return {
+                "status": "success",
+                "message": "ユーザー登録が完了しました",
+                "token": token,
+                "username": request.username
+            }
+        else:
+            raise HTTPException(status_code=500, detail="ユーザー登録に失敗しました")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"サインアップエラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"サインアップに失敗しました: {str(e)}")
+
+@app.post("/signin")
+async def signin(request: SignInRequest):
+    """ユーザー認証"""
+    try:
+        user = db_manager.verify_user(request.username, request.password)
+
+        if user:
+            # トークン生成
+            token = secrets.token_urlsafe(32)
+            active_sessions[token] = request.username
+
+            return {
+                "status": "success",
+                "message": "サインインしました",
+                "token": token,
+                "username": user['username'],
+                "email": user['email']
+            }
+        else:
+            raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが正しくありません")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"サインインエラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"サインインに失敗しました: {str(e)}")
+
+@app.post("/signout")
+async def signout(current_user: str = Depends(get_current_user), authorization: Optional[str] = Header(None)):
+    """サインアウト"""
+    try:
+        if authorization:
+            token = authorization.replace("Bearer ", "")
+            if token in active_sessions:
+                del active_sessions[token]
+
+        return {
+            "status": "success",
+            "message": "サインアウトしました"
+        }
+    except Exception as e:
+        logger.error(f"サインアウトエラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"サインアウトに失敗しました: {str(e)}")
+
+@app.get("/me")
+async def get_current_user_info(current_user: str = Depends(get_current_user)):
+    """現在のユーザー情報を取得"""
+    try:
+        user = db_manager.get_user_by_username(current_user)
+        if user:
+            return {
+                "status": "success",
+                "user": user
+            }
+        else:
+            raise HTTPException(status_code=404, detail="ユーザーが見つかりません")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ユーザー情報取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ユーザー情報の取得に失敗しました: {str(e)}")
 
 @app.get("/models")
 async def get_models():
@@ -176,8 +325,8 @@ def load_model(model_id: str):
         raise
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
-    """チャットメッセージを処理（RAG対応）"""
+async def chat(request: ChatRequest, current_user: str = Depends(get_current_user)):
+    """チャットメッセージを処理（RAG対応、認証必要）"""
     global current_model_id
 
     # セッションIDの生成または取得
@@ -382,8 +531,8 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"チャット処理に失敗しました: {str(e)}")
 
 @app.post("/documents/upload")
-async def upload_document(file: UploadFile = File(...)):
-    """ドキュメントをアップロード"""
+async def upload_document(file: UploadFile = File(...), current_user: str = Depends(get_current_user)):
+    """ドキュメントをアップロード（認証必要）"""
     try:
         # ファイル拡張子チェック
         filename = file.filename
@@ -433,8 +582,8 @@ async def list_documents():
         raise HTTPException(status_code=500, detail=f"ドキュメント一覧の取得に失敗しました: {str(e)}")
 
 @app.delete("/documents/delete")
-async def delete_all_documents():
-    """全てのドキュメントを削除"""
+async def delete_all_documents(current_user: str = Depends(get_current_user)):
+    """全てのドキュメントを削除（認証必要）"""
     try:
         rag_manager.delete_all_documents()
         return {
