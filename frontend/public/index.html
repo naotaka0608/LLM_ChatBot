@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Chatbot with RAG - Electron App</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- 認証画面 -->
+    <div id="authScreen">
+        <div class="auth-container">
+            <h1>🤖 LLM Chatbot</h1>
+
+            <div class="auth-tabs">
+                <button id="signinTab" class="auth-tab active" onclick="switchAuthMode('signin')">サインイン</button>
+                <button id="signupTab" class="auth-tab" onclick="switchAuthMode('signup')">サインアップ</button>
+            </div>
+
+            <!-- サインインフォーム -->
+            <div id="signinForm" class="auth-form active">
+                <div class="form-group">
+                    <label>ユーザー名</label>
+                    <input type="text" id="signinUsername" placeholder="ユーザー名を入力" onkeypress="if(event.key==='Enter') signin()">
+                </div>
+                <div class="form-group">
+                    <label>パスワード</label>
+                    <input type="password" id="signinPassword" placeholder="パスワードを入力" onkeypress="if(event.key==='Enter') signin()">
+                </div>
+                <button class="auth-button" onclick="signin()">サインイン</button>
+            </div>
+
+            <!-- サインアップフォーム -->
+            <div id="signupForm" class="auth-form">
+                <div class="form-group">
+                    <label>ユーザー名</label>
+                    <input type="text" id="signupUsername" placeholder="3文字以上のユーザー名">
+                </div>
+                <div class="form-group">
+                    <label>メールアドレス</label>
+                    <input type="email" id="signupEmail" placeholder="email@example.com">
+                </div>
+                <div class="form-group">
+                    <label>パスワード</label>
+                    <input type="password" id="signupPassword" placeholder="6文字以上のパスワード">
+                </div>
+                <div class="form-group">
+                    <label>パスワード（確認）</label>
+                    <input type="password" id="signupConfirmPassword" placeholder="パスワードを再入力" onkeypress="if(event.key==='Enter') signup()">
+                </div>
+                <button class="auth-button" onclick="signup()">サインアップ</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- メイン画面 -->
+    <div id="mainScreen">
+        <div class="header">
+            <h1>🤖 LLM Chatbot with RAG</h1>
+            <div class="model-selector">
+                <label>モデル:</label>
+                <select id="modelSelect">
+                    <option value="">読み込み中...</option>
+                </select>
+                <button onclick="loadSelectedModel()">読み込み</button>
+                <span class="status" id="modelStatus"></span>
+            </div>
+            <div class="user-info">
+                <span>ユーザー: <strong id="currentUsername"></strong></span>
+                <button class="signout-btn" onclick="signout()">サインアウト</button>
+            </div>
+        </div>
+
+        <div class="main-container">
+            <!-- サイドバー: ドキュメント管理 -->
+            <div class="sidebar">
+                <div>
+                    <h2>📄 ドキュメント</h2>
+                    <div class="upload-section" onclick="document.getElementById('fileInput').click()">
+                        <input type="file" id="fileInput" accept=".pdf,.txt,.md" onchange="uploadFile(event)">
+                        <p>📁 ファイルをアップロード</p>
+                        <p style="font-size: 12px; color: #666; margin-top: 5px;">PDF, TXT, MD</p>
+                    </div>
+                </div>
+
+                <div class="documents-list" id="documentsList">
+                    <p style="color: #999; text-align: center; font-size: 13px;">ドキュメントなし</p>
+                </div>
+
+                <button class="delete-all-btn" onclick="deleteAllDocuments()">全て削除</button>
+            </div>
+
+            <!-- チャットエリア -->
+            <div class="chat-container">
+                <div class="settings">
+                    <label>
+                        最大長:
+                        <input type="number" id="maxLength" value="100" min="50" max="500" step="10">
+                    </label>
+                    <label>
+                        Temperature:
+                        <input type="range" id="temperature" value="0.7" min="0.1" max="2.0" step="0.1">
+                        <span id="tempValue">0.7</span>
+                    </label>
+                    <label>
+                        <input type="checkbox" id="useRAG">
+                        RAGを使用
+                    </label>
+                    <label id="ragKLabel" style="display: none;">
+                        取得数:
+                        <input type="number" id="ragK" value="3" min="1" max="10">
+                    </label>
+                    <label id="scoreThresholdLabel" style="display: none;">
+                        スコア閾値:
+                        <input type="range" id="scoreThreshold" value="1.0" min="0" max="2.0" step="0.1">
+                        <span id="scoreThresholdValue">1.0</span>
+                    </label>
+                </div>
+
+                <div class="messages" id="messages">
+                    <div class="message system">
+                        <div class="message-content">
+                            チャットボットへようこそ！モデルを選択して「読み込み」ボタンをクリックしてください。
+                        </div>
+                    </div>
+                </div>
+
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <span>処理中...</span>
+                </div>
+
+                <div class="input-container">
+                    <input
+                        type="text"
+                        id="messageInput"
+                        placeholder="メッセージを入力..."
+                        onkeypress="handleKeyPress(event)"
+                    >
+                    <button id="sendButton" onclick="sendMessage()">送信</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

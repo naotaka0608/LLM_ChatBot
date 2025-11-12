@@ -6,7 +6,8 @@
       "Bash(python test_database.py:*)",
       "Bash(python test_score_filtering.py:*)",
       "Bash(pipenv run python:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(powershell -Command \"Get-Content index.html | Select-String -Pattern ''<script>'' -Context 0,5000 | ForEach-Object { $_Context.PostContext } | Out-File -FilePath temp_script.txt -Encoding UTF8\")"
     ],
     "deny": [],
     "ask": []

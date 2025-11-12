@@ -14,7 +14,7 @@ function createWindow() {
   // メニューバーを非表示
   Menu.setApplicationMenu(null);
 
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile('public/index.html');
 
   // 開発者ツールを開く（デバッグ用）
   // mainWindow.webContents.openDevTools();
