@@ -4,11 +4,12 @@
 
 ## 特徴
 
+- 🔐 **ユーザー認証**: サインアップ/サインイン機能によるセキュアなアクセス
 - 🤖 複数のLLMモデルを選択可能
 - 💬 リアルタイムチャットインターフェース
-- 📚 **RAG機能**: PDF/TXT/MDファイルをアップロードして参照可能
+- 📚 **RAG機能**: PDF/TXT/MDファイルをアップロードして参照可能（認証ユーザーのみ）
 - 🔍 **ベクトル検索**: FAISS + HuggingFace Embeddingsによる高速検索
-- 💾 **データベース保存**: SQLiteによるチャット履歴・ドキュメント情報・検索履歴の永続化
+- 💾 **データベース保存**: SQLiteによるチャット履歴・ドキュメント情報・検索履歴・ユーザー情報の永続化
 - 📊 **統計情報**: チャット履歴、RAG検索、人気クエリなどの分析機能
 - 🎛️ Temperature、最大長などのパラメータ調整
 - 🔄 モデルの動的ロード・切り替え
@@ -20,9 +21,9 @@
 .
 ├── backend/              # FastAPIサーバー
 │   ├── Pipfile          # Python依存関係
-│   ├── main.py          # FastAPI + HuggingFace + RAG実装
+│   ├── main.py          # FastAPI + HuggingFace + RAG + 認証実装
 │   ├── rag_manager.py   # RAG機能（ドキュメント処理・検索）
-│   ├── db_manager.py    # SQLiteデータベース管理
+│   ├── db_manager.py    # SQLiteデータベース管理（ユーザー認証含む）
 │   ├── test_database.py # データベース機能テスト
 │   ├── uploads/         # アップロードファイル保存先
 │   ├── vector_store/    # FAISSベクトルDB永続化
@@ -30,7 +31,12 @@
 ├── frontend/            # Electronアプリ
 │   ├── package.json     # Node.js依存関係
 │   ├── main.js          # Electronメインプロセス
-│   └── index.html       # チャットボットUI（RAG対応）
+│   └── public/          # 公開ファイル
+│       ├── index.html   # チャットボットUI（RAG + 認証対応）
+│       ├── css/
+│       │   └── styles.css  # スタイルシート
+│       └── js/
+│           └── app.js      # アプリケーションロジック
 └── README.md
 ```
 
@@ -96,17 +102,42 @@ npm start
 
 ## 使い方
 
-### 基本的な使い方
+### 初回起動・ユーザー登録
 
-1. Electronアプリが起動したら、上部のモデル選択ドロップダウンからモデルを選択
+1. Electronアプリが起動すると、サインイン画面が表示されます
+2. 初めて使う場合は「サインアップ」タブをクリック
+3. 以下の情報を入力してアカウントを作成：
+   - ユーザー名（3文字以上）
+   - メールアドレス
+   - パスワード（6文字以上）
+   - パスワード確認
+4. 「サインアップ」ボタンをクリックして登録完了
+
+### サインイン
+
+1. 既にアカウントがある場合は「サインイン」タブから：
+   - ユーザー名
+   - パスワード
+2. 「サインイン」ボタンをクリック
+3. 認証されると自動的にメイン画面に遷移します
+
+### 基本的なチャット
+
+1. サインイン後、上部のモデル選択ドロップダウンからモデルを選択
 2. 「読み込み」ボタンをクリックしてモデルをロード（初回は数分かかる場合があります）
 3. メッセージ入力欄にテキストを入力して送信
 4. LLMからの応答を待つ
 
-### RAG機能の使い方
+### サインアウト
+
+- 右上の「サインアウト」ボタンをクリックすると、サインイン画面に戻ります
+
+### RAG機能の使い方（要認証）
+
+> **注意**: ドキュメントのアップロードやメッセージ送信には、サインインが必要です。
 
 1. **ドキュメントをアップロード**
-   - 左サイドバーの「📁 ファイルをアップロード」エリアをクリック
+   - サインイン後、左サイドバーの「📁 ファイルをアップロード」エリアをクリック
    - PDF、TXT、またはMDファイルを選択
    - アップロード完了後、ドキュメント一覧に表示されます
 
@@ -183,18 +214,24 @@ npm start
 
 FastAPIサーバーは以下のエンドポイントを提供します：
 
+### 認証関連
+- `POST /signup` - ユーザー登録
+- `POST /signin` - サインイン（トークン取得）
+- `POST /signout` - サインアウト（要認証）
+- `GET /me` - ユーザー情報取得（要認証）
+
 ### LLMモデル関連
 - `GET /` - API情報
 - `GET /models` - 利用可能なモデル一覧
 - `GET /model/current` - 現在ロードされているモデル情報
 - `POST /model/select` - モデルを選択してロード
-- `POST /chat` - チャットメッセージを送信（RAG対応）
+- `POST /chat` - チャットメッセージを送信（RAG対応、要認証）
 - `GET /health` - ヘルスチェック
 
-### RAG機能関連
-- `POST /documents/upload` - ドキュメントをアップロード（PDF/TXT/MD）
+### RAG機能関連（要認証）
+- `POST /documents/upload` - ドキュメントをアップロード（PDF/TXT/MD、要認証）
 - `GET /documents/list` - アップロード済みドキュメント一覧
-- `DELETE /documents/delete` - 全ドキュメントを削除
+- `DELETE /documents/delete` - 全ドキュメントを削除（要認証）
 
 ### データベース・履歴関連
 - `GET /chat/history/{session_id}` - セッション別チャット履歴を取得
@@ -210,6 +247,27 @@ FastAPIサーバーは以下のエンドポイントを提供します：
 ### APIの使用例
 
 ```bash
+# ユーザー登録
+curl -X POST http://localhost:8000/signup \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "email": "test@example.com",
+    "password": "password123"
+  }'
+
+# サインイン（トークンを取得）
+curl -X POST http://localhost:8000/signin \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "password123"
+  }'
+# レスポンス例: {"status": "success", "token": "abc123...", "username": "testuser"}
+
+# 環境変数にトークンを保存
+export TOKEN="取得したトークン"
+
 # モデル一覧を取得
 curl http://localhost:8000/models
 
@@ -218,9 +276,10 @@ curl -X POST http://localhost:8000/model/select \
   -H "Content-Type: application/json" \
   -d '{"model_id": "gpt2"}'
 
-# 通常のチャット
+# 通常のチャット（要認証）
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "message": "Hello, how are you?",
     "model_id": "gpt2",
@@ -229,9 +288,10 @@ curl -X POST http://localhost:8000/chat \
     "use_rag": false
   }'
 
-# RAGを使ったチャット
+# RAGを使ったチャット（要認証）
 curl -X POST http://localhost:8000/chat \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{
     "message": "アップロードしたファイルの内容を教えて",
     "model_id": "gpt2",
@@ -239,12 +299,21 @@ curl -X POST http://localhost:8000/chat \
     "rag_k": 3
   }'
 
-# ドキュメントをアップロード
+# ドキュメントをアップロード（要認証）
 curl -X POST http://localhost:8000/documents/upload \
+  -H "Authorization: Bearer $TOKEN" \
   -F "file=@document.pdf"
 
 # ドキュメント一覧を取得
 curl http://localhost:8000/documents/list
+
+# 現在のユーザー情報を取得（要認証）
+curl -X GET http://localhost:8000/me \
+  -H "Authorization: Bearer $TOKEN"
+
+# サインアウト（要認証）
+curl -X POST http://localhost:8000/signout \
+  -H "Authorization: Bearer $TOKEN"
 
 # チャット履歴を取得
 curl http://localhost:8000/chat/history
@@ -262,7 +331,15 @@ curl http://localhost:8000/rag/popular-queries
 
 ### 保存されるデータ
 
-1. **チャット履歴** (`chat_history` テーブル)
+1. **ユーザー情報** (`users` テーブル)
+   - ユーザーID（自動採番）
+   - ユーザー名（一意）
+   - メールアドレス（一意）
+   - パスワードハッシュ（SHA-256）
+   - アカウント作成日時
+   - 最終ログイン日時
+
+2. **チャット履歴** (`chat_history` テーブル)
    - セッションID
    - ユーザーメッセージ
    - ボットの応答
@@ -270,14 +347,14 @@ curl http://localhost:8000/rag/popular-queries
    - RAG使用有無
    - タイムスタンプ
 
-2. **ドキュメント情報** (`documents` テーブル)
+3. **ドキュメント情報** (`documents` テーブル)
    - ファイル名
    - ファイルパス
    - チャンク数
    - 文字数
    - アップロード日時
 
-3. **RAG検索履歴** (`rag_searches` テーブル)
+4. **RAG検索履歴** (`rag_searches` テーブル)
    - 検索クエリ
    - 取得したドキュメント情報（JSON）
    - タイムスタンプ
@@ -329,8 +406,10 @@ rm backend/chatbot.db
 - 変更後、サーバーを再起動（`pipenv run python main.py`）
 
 ### Electronアプリ
-- [index.html](frontend/index.html) でUIを編集
-- [main.js](frontend/main.js) でElectronの設定を編集
+- [frontend/public/index.html](frontend/public/index.html) でHTML構造を編集
+- [frontend/public/css/styles.css](frontend/public/css/styles.css) でスタイルを編集
+- [frontend/public/js/app.js](frontend/public/js/app.js) でアプリケーションロジックを編集
+- [frontend/main.js](frontend/main.js) でElectronの設定を編集
 - 変更を確認するにはアプリを再起動（`npm start`）
 
 ### 新しいモデルを追加
@@ -349,8 +428,24 @@ AVAILABLE_MODELS = {
 
 MIT
 
+## セキュリティに関する注意
+
+### パスワードのハッシュ化
+- パスワードはSHA-256でハッシュ化されてデータベースに保存されます
+- 本番環境では、bcryptやArgon2などのより強力なハッシュアルゴリズムを推奨します
+
+### セッション管理
+- 認証トークンはメモリ上に保存されています（`active_sessions`辞書）
+- 本番環境では、Redis等の外部ストアを使用することを推奨します
+- サーバー再起動時にはすべてのセッションが無効になります
+
+### ローカル環境での使用
+- このアプリケーションは**ローカル環境での使用を想定**しています
+- インターネット経由でアクセスする場合は、HTTPS化やより強固な認証機構の導入が必要です
+
 ## 注意事項
 
-- このアプリケーションはローカルで動作し、データは外部に送信されません
+- このアプリケーションはローカルで動作し、LLMの推論データは外部に送信されません
+- ユーザー認証が実装されており、ファイルアップロードとチャットには認証が必要です
 - 大きなモデルを使用する場合、十分なメモリとストレージ容量が必要です
 - モデルの使用には各モデルのライセンス条項が適用されます
